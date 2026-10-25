@@ -54,14 +54,12 @@ const getTransactions = async (req, res, next) => {
 
 const createTransaction = async (req, res, next) => {
     try {
-        const { categoryId, type, amount, description, date, currency } = req.body;
+        // Use 'let' for categoryId so we can dynamically assign it if missing
+        let { categoryId, type, amount, description, date, currency } = req.body;
 
-        if (!categoryId || !type || amount === undefined || !description || !date) {
+        // REMOVED !categoryId from the strict validation check
+        if (!type || amount === undefined || !description || !date) {
             return res.status(400).json({ success: false, message: 'Please provide all required fields' });
-        }
-
-        if (!mongoose.Types.ObjectId.isValid(categoryId)) {
-            return res.status(400).json({ success: false, message: 'Invalid Category ID format' });
         }
 
         if (!['income', 'expense'].includes(type)) {
@@ -73,13 +71,35 @@ const createTransaction = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'Amount must be a valid number greater than 0' });
         }
 
-        const category = await Category.findOne({ _id: categoryId, user: req.user.id });
-        if (!category) {
-            return res.status(404).json({ success: false, message: 'Category not found or access denied' });
-        }
+        let category;
 
-        if (category.type !== type) {
-            return res.status(400).json({ success: false, message: `Type mismatch: Cannot assign an '${type}' transaction to an '${category.type}' category` });
+        // NEW: Dynamic Uncategorized Fallback
+        if (!categoryId) {
+            category = await Category.findOne({ user: req.user.id, name: 'Uncategorized', type });
+            
+            if (!category) {
+                category = await Category.create({
+                    user: req.user.id,
+                    name: 'Uncategorized',
+                    color: '#9CA3AF', // Neutral gray
+                    type
+                });
+            }
+            categoryId = category._id;
+        } else {
+            // Existing strict validation if a category IS provided
+            if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+                return res.status(400).json({ success: false, message: 'Invalid Category ID format' });
+            }
+
+            category = await Category.findOne({ _id: categoryId, user: req.user.id });
+            if (!category) {
+                return res.status(404).json({ success: false, message: 'Category not found or access denied' });
+            }
+
+            if (category.type !== type) {
+                return res.status(400).json({ success: false, message: `Type mismatch: Cannot assign an '${type}' transaction to an '${category.type}' category` });
+            }
         }
 
         // Authoritative backend conversion
@@ -121,7 +141,7 @@ const updateTransaction = async (req, res, next) => {
             return res.status(404).json({ success: false, message: 'Transaction not found or unauthorized' });
         }
 
-        const { categoryId, type, amount, description, date, currency } = req.body;
+        let { categoryId, type, amount, description, date, currency } = req.body;
         let updateData = { description, date };
 
         if (amount !== undefined) {
@@ -130,7 +150,6 @@ const updateTransaction = async (req, res, next) => {
                 return res.status(400).json({ success: false, message: 'Invalid amount' });
             }
             
-            // Authoritative backend conversion
             try {
                 updateData.amount = await convertToPaise(numAmount, currency);
             } catch (err) {
@@ -138,12 +157,27 @@ const updateTransaction = async (req, res, next) => {
             }
         }
 
+        const finalType = type || transaction.type;
+
+        // NEW: If the frontend sends an empty string for categoryId, it means the user cleared it out
+        if (categoryId === "" || categoryId === null) {
+            let uncategorized = await Category.findOne({ user: req.user.id, name: 'Uncategorized', type: finalType });
+            if (!uncategorized) {
+                uncategorized = await Category.create({
+                    user: req.user.id,
+                    name: 'Uncategorized',
+                    color: '#9CA3AF',
+                    type: finalType
+                });
+            }
+            categoryId = uncategorized._id.toString();
+        }
+
         if (categoryId && !mongoose.Types.ObjectId.isValid(categoryId)) {
             return res.status(400).json({ success: false, message: 'Invalid Category ID format' });
         }
 
         const finalCategoryId = categoryId || transaction.category;
-        const finalType = type || transaction.type;
 
         if (categoryId || type) {
             if (type && !['income', 'expense'].includes(type)) {

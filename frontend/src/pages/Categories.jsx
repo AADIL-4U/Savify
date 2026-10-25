@@ -2,7 +2,7 @@ import { useState, useEffect, useContext } from 'react';
 import api from '../services/api';
 import { AuthContext } from '../context/AuthContext';
 import { getCurrencySymbol } from '../utils/currency';
-import { PlusCircle, Loader2, AlertCircle, Tag, Wallet } from 'lucide-react';
+import { PlusCircle, Loader2, AlertCircle, Tag, Wallet, Trash2 } from 'lucide-react';
 
 const Categories = () => {
     const { user, convertFromBase, isCurrencyReady, isCurrencyLoading, currencyError } = useContext(AuthContext);
@@ -65,7 +65,6 @@ const Categories = () => {
 
         setFormLoading(true);
         try {
-            // Send exact user input and their currency to the backend for authoritative conversion
             const payload = { 
                 name, 
                 type, 
@@ -120,6 +119,144 @@ const Categories = () => {
         }
     };
 
+    const handleDeleteCategory = async (catId, catName) => {
+        if (catName === 'Uncategorized') {
+            alert('The default Uncategorized category cannot be deleted.');
+            return;
+        }
+
+        const confirmDelete = window.confirm(
+            `Are you sure you want to delete the "${catName}" category?\n\nAny existing transactions in this category will be preserved and reassigned to "Uncategorized".`
+        );
+        
+        if (!confirmDelete) return;
+
+        try {
+            const response = await api.delete(`/categories/${catId}`);
+            if (response.data.success) {
+                setCategories(prev => prev.filter(c => c._id !== catId));
+            }
+        } catch (error) {
+            alert(error.response?.data?.message || 'Failed to delete category.');
+        }
+    };
+
+    // Separate categories by type
+    const expenseCategories = categories.filter(cat => cat.type === 'expense');
+    const incomeCategories = categories.filter(cat => cat.type === 'income');
+
+    // Reusable UI card for rendering a single category
+    const renderCategoryCard = (cat) => {
+        const isExpense = cat.type === 'expense';
+        const hasBudget = isExpense && cat.budgetLimit > 0;
+        
+        const spent = convertFromBase(cat.spentThisMonth || 0);
+        const budget = convertFromBase(cat.budgetLimit || 0);
+        
+        const percentage = hasBudget ? Math.round((spent / budget) * 100) : 0;
+        const visualWidth = Math.min(percentage, 100);
+
+        let barColor = 'bg-emerald-500 dark:bg-emerald-400'; 
+        let textColor = 'text-emerald-600 dark:text-emerald-400';
+        if (percentage >= 100) { 
+            barColor = 'bg-rose-500 dark:bg-rose-400'; 
+            textColor = 'text-rose-600 dark:text-rose-400'; 
+        } 
+        else if (percentage >= 75) { 
+            barColor = 'bg-amber-500 dark:bg-amber-400'; 
+            textColor = 'text-amber-600 dark:text-amber-400'; 
+        }
+
+        const isUncategorized = cat.name === 'Uncategorized';
+        let dotColor = cat.color;
+        let nameTextColor = "text-gray-900 dark:text-gray-100";
+
+        if (isUncategorized) {
+            dotColor = cat.type === 'income' ? '#10b981' : '#ef4444';
+            nameTextColor = cat.type === 'income' 
+                ? 'text-emerald-600 dark:text-emerald-400' 
+                : 'text-red-600 dark:text-red-400';
+        }
+
+        return (
+            <div key={cat._id} className="p-4 border border-gray-100 dark:border-oled-border rounded-lg shadow-sm bg-white dark:bg-oled-popover space-y-3 transition-colors">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                        <div className="h-4 w-4 rounded-full mr-3 flex-shrink-0" style={{ backgroundColor: dotColor }} />
+                        <div>
+                            <p className={`text-sm font-semibold transition-colors ${nameTextColor}`}>{cat.name}</p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 capitalize transition-colors">{cat.type}</p>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                        {isExpense && (
+                            <div className="text-right">
+                                {editingBudgetId === cat._id ? (
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="number"
+                                            step={dynamicStep}
+                                            min="0"
+                                            value={budgetInputValues[cat._id] !== undefined ? budgetInputValues[cat._id] : ''}
+                                            onChange={(e) => setBudgetInputValues({ ...budgetInputValues, [cat._id]: e.target.value })}
+                                            className="w-28 rounded border border-gray-300 dark:border-oled-border bg-white dark:bg-oled-card text-gray-900 dark:text-gray-100 dark:[color-scheme:dark] px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-colors"
+                                        />
+                                        <button 
+                                            onClick={() => handleSaveBudget(cat._id)} 
+                                            disabled={actionLoadingId === cat._id} 
+                                            className="px-2.5 py-1 bg-emerald-600 dark:bg-emerald-500 text-white rounded text-xs font-medium hover:bg-emerald-700 dark:hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 dark:focus:ring-offset-oled-popover transition-colors"
+                                        >
+                                            {actionLoadingId === cat._id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+                                        </button>
+                                        <button 
+                                            onClick={() => setEditingBudgetId(null)} 
+                                            className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-1 transition-colors"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button 
+                                        onClick={() => handleStartEditBudget(cat)} 
+                                        className="text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 flex items-center gap-1 bg-emerald-50 dark:bg-emerald-400/10 px-2.5 py-1 rounded-md transition-colors"
+                                    >
+                                        <Wallet className="h-3.5 w-3.5" />
+                                        {hasBudget ? `Budget: ${currencySymbol}${budget.toFixed(2)}` : 'Set Budget'}
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                        
+                        {cat.name !== 'Uncategorized' && (
+                            <button 
+                                onClick={() => handleDeleteCategory(cat._id, cat.name)} 
+                                aria-label={`Delete category: ${cat.name}`}
+                                className="text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-400 transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 p-1"
+                            >
+                                <Trash2 className="h-4 w-4" />
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {hasBudget && (
+                    <div className="space-y-1.5 pt-2 border-t border-gray-100 dark:border-oled-border transition-colors">
+                        <div className="flex justify-between text-xs font-medium">
+                            <span className="text-gray-600 dark:text-gray-400 transition-colors">
+                                Spent: <span className="font-semibold text-gray-900 dark:text-gray-100 transition-colors">{currencySymbol}{spent.toFixed(2)}</span> of {currencySymbol}{budget.toFixed(2)}
+                            </span>
+                            <span className={`${textColor} transition-colors`}>{percentage}% {percentage >= 100 && '— Over Budget!'}</span>
+                        </div>
+                        <div className="w-full bg-gray-100 dark:bg-oled-border rounded-full h-2 overflow-hidden transition-colors">
+                            <div className={`h-2 rounded-full transition-all duration-300 ${barColor}`} style={{ width: `${visualWidth}%` }} />
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     // Strict UI Protection
     if (loading || isCurrencyLoading) {
         return (
@@ -149,6 +286,7 @@ const Categories = () => {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Left Panel: Form */}
                 <div className="lg:col-span-1">
                     <div className="bg-white dark:bg-oled-card p-6 rounded-xl border border-gray-200 dark:border-oled-border shadow-sm transition-colors">
                         <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2 transition-colors">
@@ -242,6 +380,7 @@ const Categories = () => {
                     </div>
                 </div>
 
+                {/* Right Panel: Lists */}
                 <div className="lg:col-span-2">
                     <div className="bg-white dark:bg-oled-card rounded-xl border border-gray-200 dark:border-oled-border shadow-sm overflow-hidden flex flex-col h-full min-h-[400px] transition-colors">
                         <div className="px-6 py-4 border-b border-gray-200 dark:border-oled-border bg-gray-50 dark:bg-oled-card transition-colors">
@@ -255,94 +394,36 @@ const Categories = () => {
                                     <p>No categories found.</p>
                                 </div>
                             ) : (
-                                <div className="space-y-4">
-                                    {categories.map((cat) => {
-                                        const isExpense = cat.type === 'expense';
-                                        const hasBudget = isExpense && cat.budgetLimit > 0;
-                                        
-                                        const spent = convertFromBase(cat.spentThisMonth || 0);
-                                        const budget = convertFromBase(cat.budgetLimit || 0);
-                                        
-                                        const percentage = hasBudget ? Math.round((spent / budget) * 100) : 0;
-                                        const visualWidth = Math.min(percentage, 100);
-
-                                        let barColor = 'bg-emerald-500 dark:bg-emerald-400'; 
-                                        let textColor = 'text-emerald-600 dark:text-emerald-400';
-                                        if (percentage >= 100) { 
-                                            barColor = 'bg-rose-500 dark:bg-rose-400'; 
-                                            textColor = 'text-rose-600 dark:text-rose-400'; 
-                                        } 
-                                        else if (percentage >= 75) { 
-                                            barColor = 'bg-amber-500 dark:bg-amber-400'; 
-                                            textColor = 'text-amber-600 dark:text-amber-400'; 
-                                        }
-
-                                        return (
-                                            <div key={cat._id} className="p-4 border border-gray-100 dark:border-oled-border rounded-lg shadow-sm bg-white dark:bg-oled-popover space-y-3 transition-colors">
-                                                <div className="flex items-center justify-between">
-                                                    <div className="flex items-center">
-                                                        <div className="h-4 w-4 rounded-full mr-3 flex-shrink-0" style={{ backgroundColor: cat.color }} />
-                                                        <div>
-                                                            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 transition-colors">{cat.name}</p>
-                                                            <p className="text-xs text-gray-500 dark:text-gray-400 capitalize transition-colors">{cat.type}</p>
-                                                        </div>
-                                                    </div>
-
-                                                    {isExpense && (
-                                                        <div className="text-right">
-                                                            {editingBudgetId === cat._id ? (
-                                                                <div className="flex items-center gap-2">
-                                                                    <input
-                                                                        type="number"
-                                                                        step={dynamicStep}
-                                                                        min="0"
-                                                                        value={budgetInputValues[cat._id] !== undefined ? budgetInputValues[cat._id] : ''}
-                                                                        onChange={(e) => setBudgetInputValues({ ...budgetInputValues, [cat._id]: e.target.value })}
-                                                                        className="w-28 rounded border border-gray-300 dark:border-oled-border bg-white dark:bg-oled-card text-gray-900 dark:text-gray-100 dark:[color-scheme:dark] px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-colors"
-                                                                    />
-                                                                    <button 
-                                                                        onClick={() => handleSaveBudget(cat._id)} 
-                                                                        disabled={actionLoadingId === cat._id} 
-                                                                        className="px-2.5 py-1 bg-emerald-600 dark:bg-emerald-500 text-white rounded text-xs font-medium hover:bg-emerald-700 dark:hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 dark:focus:ring-offset-oled-popover transition-colors"
-                                                                    >
-                                                                        {actionLoadingId === cat._id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
-                                                                    </button>
-                                                                    <button 
-                                                                        onClick={() => setEditingBudgetId(null)} 
-                                                                        className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-1 transition-colors"
-                                                                    >
-                                                                        Cancel
-                                                                    </button>
-                                                                </div>
-                                                            ) : (
-                                                                <button 
-                                                                    onClick={() => handleStartEditBudget(cat)} 
-                                                                    className="text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 flex items-center gap-1 bg-emerald-50 dark:bg-emerald-400/10 px-2.5 py-1 rounded-md transition-colors"
-                                                                >
-                                                                    <Wallet className="h-3.5 w-3.5" />
-                                                                    {hasBudget ? `Budget: ${currencySymbol}${budget.toFixed(2)}` : 'Set Budget'}
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                {hasBudget && (
-                                                    <div className="space-y-1.5 pt-2 border-t border-gray-100 dark:border-oled-border transition-colors">
-                                                        <div className="flex justify-between text-xs font-medium">
-                                                            <span className="text-gray-600 dark:text-gray-400 transition-colors">
-                                                                Spent: <span className="font-semibold text-gray-900 dark:text-gray-100 transition-colors">{currencySymbol}{spent.toFixed(2)}</span> of {currencySymbol}{budget.toFixed(2)}
-                                                            </span>
-                                                            <span className={`${textColor} transition-colors`}>{percentage}% {percentage >= 100 && '— Over Budget!'}</span>
-                                                        </div>
-                                                        <div className="w-full bg-gray-100 dark:bg-oled-border rounded-full h-2 overflow-hidden transition-colors">
-                                                            <div className={`h-2 rounded-full transition-all duration-300 ${barColor}`} style={{ width: `${visualWidth}%` }} />
-                                                        </div>
-                                                    </div>
-                                                )}
+                                <div className="space-y-8">
+                                    
+                                    {/* Expense Categories Section */}
+                                    <div>
+                                        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 border-b border-gray-100 dark:border-oled-border pb-2 transition-colors">
+                                            Expense Categories
+                                        </h3>
+                                        {expenseCategories.length === 0 ? (
+                                            <p className="text-sm text-gray-400 dark:text-gray-500 italic">No expense categories created yet.</p>
+                                        ) : (
+                                            <div className="space-y-4">
+                                                {expenseCategories.map(renderCategoryCard)}
                                             </div>
-                                        );
-                                    })}
+                                        )}
+                                    </div>
+
+                                    {/* Income Categories Section */}
+                                    <div>
+                                        <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 border-b border-gray-100 dark:border-oled-border pb-2 transition-colors">
+                                            Income Categories
+                                        </h3>
+                                        {incomeCategories.length === 0 ? (
+                                            <p className="text-sm text-gray-400 dark:text-gray-500 italic">No income categories created yet.</p>
+                                        ) : (
+                                            <div className="space-y-4">
+                                                {incomeCategories.map(renderCategoryCard)}
+                                            </div>
+                                        )}
+                                    </div>
+
                                 </div>
                             )}
                         </div>

@@ -1,6 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { getCategories, createCategory, updateCategory } = require('../controllers/categoryController');
+const { 
+    getCategories, 
+    createCategory, 
+    updateCategory, 
+    deleteCategory 
+} = require('../controllers/categoryController');
 const { protect } = require('../middleware/authMiddleware');
 
 router.route('/')
@@ -8,6 +13,7 @@ router.route('/')
     .post(protect, createCategory);
 
 router.route('/:id')
-    .put(protect, updateCategory);
+    .put(protect, updateCategory)
+    .delete(protect, deleteCategory);
 
 module.exports = router;

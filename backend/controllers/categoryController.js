@@ -163,4 +163,63 @@ const updateCategory = async (req, res, next) => {
     } catch (error) { next(error); }
 };
 
-module.exports = { getCategories, createCategory, updateCategory };
+const deleteCategory = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ success: false, message: 'Invalid Category ID format' });
+        }
+
+        const category = await Category.findOne({ _id: id, user: req.user.id });
+
+        if (!category) {
+            return res.status(404).json({ success: false, message: 'Category not found or unauthorized' });
+        }
+
+        if (category.name === 'Uncategorized') {
+            return res.status(400).json({ success: false, message: 'Cannot delete the default Uncategorized category' });
+        }
+
+        // Check if there are transactions associated with this category
+        const transactionsCount = await Transaction.countDocuments({ category: id, user: req.user.id });
+
+        if (transactionsCount > 0) {
+            // Find an existing Uncategorized category of the same type for this user
+            let uncategorized = await Category.findOne({ 
+                user: req.user.id, 
+                name: 'Uncategorized', 
+                type: category.type 
+            });
+
+            // If it doesn't exist, generate it dynamically
+            if (!uncategorized) {
+                uncategorized = await Category.create({
+                    user: req.user.id,
+                    name: 'Uncategorized',
+                    color: '#9CA3AF', // Neutral gray color for UI
+                    type: category.type
+                });
+            }
+
+            // Reassign all orphaned transactions to this Uncategorized category
+            await Transaction.updateMany(
+                { category: id, user: req.user.id },
+                { $set: { category: uncategorized._id } }
+            );
+        }
+
+        // Delete the original category
+        await Category.findByIdAndDelete(id);
+
+        res.status(200).json({ 
+            success: true, 
+            message: 'Category deleted successfully',
+            data: { id }
+        });
+    } catch (error) { 
+        next(error); 
+    }
+};
+
+module.exports = { getCategories, createCategory, updateCategory, deleteCategory };

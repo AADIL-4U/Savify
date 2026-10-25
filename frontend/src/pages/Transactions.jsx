@@ -250,39 +250,57 @@ const Transactions = () => {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200 dark:divide-oled-border">
-                                {transactions.map((tx) => (
-                                    <tr key={tx._id} className="hover:bg-gray-50 dark:hover:bg-oled-popover/50 transition-colors">
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{new Date(tx.date).toLocaleDateString()}</td>
-                                        <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100 font-medium">{tx.description}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex items-center">
-                                                <div className="h-3 w-3 rounded-full mr-2" style={{ backgroundColor: tx.category.color }} />
-                                                <span className="text-sm text-gray-600 dark:text-gray-300">{tx.category.name}</span>
-                                            </div>
-                                        </td>
-                                        <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold text-right ${tx.type === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                                            {tx.type === 'income' ? '+' : '-'}{currencySymbol}{convertFromBase(tx.amount).toFixed(2)}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-center">
-                                            <div className="flex items-center justify-center gap-3">
-                                                <button 
-                                                    onClick={() => handleOpenModal(tx)} 
-                                                    aria-label={`Edit transaction: ${tx.description}`}
-                                                    className="text-gray-400 hover:text-emerald-600 dark:text-gray-500 dark:hover:text-emerald-400 transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                                                >
-                                                    <Edit2 className="h-4 w-4" />
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleDelete(tx._id)} 
-                                                    aria-label={`Delete transaction: ${tx.description}`}
-                                                    className="text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-400 transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
-                                                >
-                                                    <Trash2 className="h-4 w-4" />
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
+                                {transactions.map((tx) => {
+                                    // NEW: Dynamic overriding for Uncategorized text and dot colors
+                                    const isUncategorized = tx.category.name === 'Uncategorized';
+                                    let dotColor = tx.category.color;
+                                    let categoryTextColor = "text-gray-600 dark:text-gray-300";
+
+                                    if (isUncategorized) {
+                                        dotColor = tx.type === 'income' ? '#10b981' : '#ef4444'; // Emerald for income, Red for expense
+                                        categoryTextColor = tx.type === 'income' 
+                                            ? 'text-emerald-600 dark:text-emerald-400 font-medium' 
+                                            : 'text-red-600 dark:text-red-400 font-medium';
+                                    }
+
+                                    return (
+                                        <tr key={tx._id} className="hover:bg-gray-50 dark:hover:bg-oled-popover/50 transition-colors">
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
+                                                {new Date(tx.date).toLocaleDateString()}
+                                            </td>
+                                            <td className="px-6 py-4 text-sm text-gray-900 dark:text-gray-100 font-medium">
+                                                {tx.description}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="flex items-center">
+                                                    <div className="h-3 w-3 rounded-full mr-2" style={{ backgroundColor: dotColor }} />
+                                                    <span className={`text-sm ${categoryTextColor}`}>{tx.category.name}</span>
+                                                </div>
+                                            </td>
+                                            <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold text-right ${tx.type === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                                {tx.type === 'income' ? '+' : '-'}{currencySymbol}{convertFromBase(tx.amount).toFixed(2)}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-center">
+                                                <div className="flex items-center justify-center gap-3">
+                                                    <button 
+                                                        onClick={() => handleOpenModal(tx)} 
+                                                        aria-label={`Edit transaction: ${tx.description}`}
+                                                        className="text-gray-400 hover:text-emerald-600 dark:text-gray-500 dark:hover:text-emerald-400 transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                                                    >
+                                                        <Edit2 className="h-4 w-4" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleDelete(tx._id)} 
+                                                        aria-label={`Delete transaction: ${tx.description}`}
+                                                        className="text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-400 transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                                                    >
+                                                        <Trash2 className="h-4 w-4" />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>

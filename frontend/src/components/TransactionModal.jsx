@@ -22,7 +22,8 @@ const TransactionModal = ({ isOpen, onClose, onSubmit, initialData, categories, 
         if (isOpen) {
             if (initialData) {
                 setType(initialData.type);
-                setCategoryId(initialData.category._id);
+                // If it's uncategorized or missing, it will safely fallback
+                setCategoryId(initialData.category?._id || '');
                 setAmount(initialData.amount);
                 // Convert ISO date to YYYY-MM-DD for the date input
                 setDate(new Date(initialData.date).toISOString().split('T')[0]);
@@ -49,9 +50,9 @@ const TransactionModal = ({ isOpen, onClose, onSubmit, initialData, categories, 
         e.preventDefault();
         setError('');
 
-        // Client-side validation
-        if (!description.trim() || !amount || !date || !categoryId) {
-            return setError('Please fill in all fields.');
+        // Client-side validation (categoryId is no longer required)
+        if (!description.trim() || !amount || !date) {
+            return setError('Please fill in all required fields.');
         }
 
         const numAmount = parseFloat(amount);
@@ -61,7 +62,7 @@ const TransactionModal = ({ isOpen, onClose, onSubmit, initialData, categories, 
 
         onSubmit({
             type,
-            categoryId,
+            categoryId, // Will be '' if left on the default option
             amount: numAmount,
             date,
             description
@@ -131,16 +132,12 @@ const TransactionModal = ({ isOpen, onClose, onSubmit, initialData, categories, 
                                 className="mt-1 block w-full rounded-md border border-gray-300 dark:border-oled-border px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white dark:bg-oled-popover text-gray-900 dark:text-gray-100 dark:[color-scheme:dark] transition-colors disabled:opacity-50"
                                 disabled={isLoading}
                             >
-                                <option value="" disabled className="bg-white text-gray-900 dark:bg-oled-popover dark:text-gray-100">Select a {type} category</option>
+                                {/* Removed the 'disabled' attribute here so users can select it to revert to Uncategorized */}
+                                <option value="" className="bg-white text-gray-900 dark:bg-oled-popover dark:text-gray-100">Select a {type} category</option>
                                 {filteredCategories.map(cat => (
                                     <option key={cat._id} value={cat._id} className="bg-white text-gray-900 dark:bg-oled-popover dark:text-gray-100">{cat.name}</option>
                                 ))}
                             </select>
-                            {filteredCategories.length === 0 && (
-                                <p className="mt-1 text-xs text-red-500 dark:text-red-400 transition-colors">
-                                    No {type} categories found. Please create one first.
-                                </p>
-                            )}
                         </div>
 
                        {/* Amount */}
@@ -199,7 +196,8 @@ const TransactionModal = ({ isOpen, onClose, onSubmit, initialData, categories, 
                     <button
                         type="submit"
                         form="transaction-form"
-                        disabled={isLoading || filteredCategories.length === 0}
+                        // Removed the filteredCategories.length === 0 check here
+                        disabled={isLoading}
                         className="flex justify-center items-center px-4 py-2 text-sm font-medium text-white bg-emerald-600 dark:bg-emerald-500 border border-transparent rounded-md shadow-sm hover:bg-emerald-700 dark:hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 dark:focus:ring-offset-oled-card transition-colors disabled:opacity-70"
                     >
                         {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
