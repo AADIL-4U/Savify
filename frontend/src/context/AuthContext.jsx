@@ -37,6 +37,11 @@ export const AuthProvider = ({ children }) => {
     const [transactionsCustomStart, setTransactionsCustomStart] = useState('');
     const [transactionsCustomEnd, setTransactionsCustomEnd] = useState('');
 
+    // Categories Filter Persistence State (Resets on refresh/logout)
+    const [categoriesFilterType, setCategoriesFilterType] = useState('thisMonth');
+    const [categoriesCustomStart, setCategoriesCustomStart] = useState('');
+    const [categoriesCustomEnd, setCategoriesCustomEnd] = useState('');
+
     const fetchRates = async () => {
         setIsRatesLoading(true);
         setRatesError(null);
@@ -115,6 +120,9 @@ export const AuthProvider = ({ children }) => {
         setTransactionsFilterType('thisMonth');
         setTransactionsCustomStart('');
         setTransactionsCustomEnd('');
+        setCategoriesFilterType('thisMonth');
+        setCategoriesCustomStart('');
+        setCategoriesCustomEnd('');
         localStorage.removeItem('savify_user');
         window.location.href = '/login';
     };
@@ -150,7 +158,10 @@ export const AuthProvider = ({ children }) => {
             dashboardCustomEnd, setDashboardCustomEnd,
             transactionsFilterType, setTransactionsFilterType,
             transactionsCustomStart, setTransactionsCustomStart,
-            transactionsCustomEnd, setTransactionsCustomEnd
+            transactionsCustomEnd, setTransactionsCustomEnd,
+            categoriesFilterType, setCategoriesFilterType,
+            categoriesCustomStart, setCategoriesCustomStart,
+            categoriesCustomEnd, setCategoriesCustomEnd
         }}>
             {children}
         </AuthContext.Provider>

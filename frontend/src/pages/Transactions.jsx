@@ -3,6 +3,7 @@ import api from '../services/api';
 import { AuthContext } from '../context/AuthContext';
 import { getCurrencySymbol } from '../utils/currency';
 import TransactionModal from '../components/TransactionModal';
+import ConfirmModal from '../components/ConfirmModal';
 import { PlusCircle, Loader2, AlertCircle, Edit2, Trash2, ReceiptText, Filter, Download } from 'lucide-react';
 
 const formatLocal = (d) => {
@@ -33,6 +34,9 @@ const Transactions = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedTransaction, setSelectedTransaction] = useState(null);
     const [modalLoading, setModalLoading] = useState(false);
+
+    // Custom Modal State
+    const [confirmModal, setConfirmModal] = useState({ isOpen: false, transactionId: null });
 
     const fetchFilteredTransactions = async (startString, endString) => {
         setIsFetching(true);
@@ -92,7 +96,6 @@ const Transactions = () => {
                 const catRes = await api.get('/categories');
                 if (catRes.data.success) setCategories(catRes.data.data);
 
-                // Initialize transactions based on persisted context filter state
                 if (filterType === 'custom' && customStart && customEnd) {
                     await fetchFilteredTransactions(customStart, customEnd);
                 } else if (filterType !== 'custom') {
@@ -119,7 +122,6 @@ const Transactions = () => {
         fetchFilteredTransactions(customStart, customEnd);
     };
 
-    // --- CSV Export Handler ---
     const handleExportCSV = () => {
         if (transactions.length === 0) {
             alert('No transactions available to export.');
@@ -191,13 +193,21 @@ const Transactions = () => {
         }
     };
 
-    const handleDelete = async (id) => {
-        if (!window.confirm('Are you sure you want to permanently delete this transaction?')) return;
+    const initiateDeleteTransaction = (id) => {
+        setConfirmModal({ isOpen: true, transactionId: id });
+    };
+
+    const executeDeleteTransaction = async () => {
+        const { transactionId } = confirmModal;
+        if (!transactionId) return;
+
         try {
-            const res = await api.delete(`/transactions/${id}`);
-            if (res.data.success) setTransactions(prev => prev.filter(tx => tx._id !== id));
+            const res = await api.delete(`/transactions/${transactionId}`);
+            if (res.data.success) setTransactions(prev => prev.filter(tx => tx._id !== transactionId));
         } catch (error) {
             alert(error.response?.data?.message || 'Failed to delete transaction.');
+        } finally {
+            setConfirmModal({ isOpen: false, transactionId: null });
         }
     };
 
@@ -358,7 +368,7 @@ const Transactions = () => {
                                                         <Edit2 className="h-4 w-4" />
                                                     </button>
                                                     <button 
-                                                        onClick={() => handleDelete(tx._id)} 
+                                                        onClick={() => initiateDeleteTransaction(tx._id)} 
                                                         aria-label={`Delete transaction: ${tx.description}`}
                                                         className="text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-400 transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                                                     >
@@ -382,6 +392,15 @@ const Transactions = () => {
                 initialData={selectedTransaction}
                 categories={categories}
                 isLoading={modalLoading}
+            />
+
+            <ConfirmModal 
+                isOpen={confirmModal.isOpen}
+                onClose={() => setConfirmModal({ isOpen: false, transactionId: null })}
+                onConfirm={executeDeleteTransaction}
+                title="Delete Transaction"
+                message="Are you sure you want to permanently delete this transaction? This action cannot be undone."
+                confirmText="Delete"
             />
         </div>
     );

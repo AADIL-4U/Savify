@@ -21,7 +21,12 @@ const categorySchema = new mongoose.Schema({
     },
     budgetLimit: {
         type: Number,
-        default: 0 // Stored in integer paise. 0 means unset.
+        default: 0 // Stored in integer paise. Fallback default.
+    },
+    monthlyBudgets: {
+        type: Map,
+        of: Number, // key: "YYYY-MM" (e.g., "2026-09"), value: paise in integer
+        default: {}
     }
 }, { 
     timestamps: true 

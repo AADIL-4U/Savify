@@ -3,13 +3,37 @@ const Category = require('../models/Category');
 const Transaction = require('../models/Transaction');
 const exchangeRateService = require('../services/exchangeRateService');
 
+// Helper to check if date range covers a single full calendar month and return "YYYY-MM"
+const getSingleMonthKey = (startDateStr, endDateStr) => {
+    if (!startDateStr || !endDateStr) return null;
+    const startParts = startDateStr.split('-').map(Number);
+    const endParts = endDateStr.split('-').map(Number);
+    if (startParts.length !== 3 || endParts.length !== 3) return null;
+
+    const [sYear, sMonth, sDay] = startParts;
+    const [eYear, eMonth, eDay] = endParts;
+
+    if (sYear !== eYear || sMonth !== eMonth) return null;
+    if (sDay !== 1) return null;
+
+    const lastDayOfMonth = new Date(sYear, sMonth, 0).getDate();
+    if (eDay !== lastDayOfMonth) return null;
+
+    return `${sYear}-${String(sMonth).padStart(2, '0')}`;
+};
+
+const getThisMonthKey = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+
 // Helper to convert foreign amount to canonical INR paise
 const convertToPaise = async (amount, currency) => {
     if (currency && currency !== 'INR') {
         const rateData = await exchangeRateService.getRates();
         const rate = rateData.rates[currency];
         if (!rate) throw new Error(`Invalid currency code: ${currency}`);
-        
+
         const inrAmount = amount / rate;
         return Math.round(inrAmount * 100);
     }
@@ -18,38 +42,78 @@ const convertToPaise = async (amount, currency) => {
 
 const getCategories = async (req, res, next) => {
     try {
+        const { startDate, endDate } = req.query;
         const userObjectId = new mongoose.Types.ObjectId(req.user.id);
-        const now = new Date();
-        const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-        const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+
+        let transactionQuery = { user: userObjectId };
+
+        if (startDate && endDate) {
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+            if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+                return res.status(400).json({ success: false, message: 'Invalid dates' });
+            }
+
+            const exclusiveEnd = new Date(end);
+            exclusiveEnd.setDate(exclusiveEnd.getDate() + 1);
+
+            transactionQuery.date = { $gte: start, $lt: exclusiveEnd };
+        }
+
+        const activeTransactionCategories = await Transaction.distinct('category', transactionQuery);
+
+        let categoryQuery = { user: req.user.id };
+
+        if (startDate && endDate) {
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+            const exclusiveEnd = new Date(end);
+            exclusiveEnd.setDate(exclusiveEnd.getDate() + 1);
+
+            categoryQuery.$or = [
+                { _id: { $in: activeTransactionCategories } },
+                { createdAt: { $gte: start, $lt: exclusiveEnd } },
+                { name: 'Uncategorized' }
+            ];
+        }
 
         const spendingAggregation = await Transaction.aggregate([
-            { 
-                $match: { 
-                    user: userObjectId, 
-                    type: 'expense',
-                    date: { $gte: startOfThisMonth, $lt: startOfNextMonth } 
-                } 
-            },
+            { $match: transactionQuery },
             { $group: { _id: "$category", totalSpent: { $sum: "$amount" } } }
         ]);
 
         const spendingMap = {};
         spendingAggregation.forEach(item => {
-            spendingMap[item._id.toString()] = item.totalAmount || item.totalSpent || 0;
+            if (item._id) {
+                spendingMap[item._id.toString()] = item.totalSpent || 0;
+            }
         });
 
-        const categories = await Category.find({ user: req.user.id }).sort({ createdAt: -1 });
-        
+        const categories = await Category.find(categoryQuery).sort({ createdAt: -1 });
+        const monthKey = getSingleMonthKey(startDate, endDate);
+        const thisMonthKey = getThisMonthKey();
+
         const enrichedCategories = categories.map(cat => {
             const catObj = cat.toObject();
             const spentInPaise = spendingMap[cat._id.toString()] || 0;
 
-            catObj.budgetLimit = Number((catObj.budgetLimit / 100).toFixed(2));
-            catObj.spentThisMonth = Number((spentInPaise / 100).toFixed(2));
+            let budgetInPaise = 0;
+            if (cat.type === 'expense' && monthKey) {
+                if (cat.monthlyBudgets && cat.monthlyBudgets.has && cat.monthlyBudgets.has(monthKey)) {
+                    budgetInPaise = cat.monthlyBudgets.get(monthKey);
+                } else if (cat.monthlyBudgets && typeof cat.monthlyBudgets.get === 'function' && cat.monthlyBudgets.get(monthKey) !== undefined) {
+                    budgetInPaise = cat.monthlyBudgets.get(monthKey);
+                } else if (monthKey === thisMonthKey && (!cat.monthlyBudgets || cat.monthlyBudgets.size === 0)) {
+                    budgetInPaise = cat.budgetLimit || 0;
+                }
+            }
+
+            catObj.budgetLimit = Number((budgetInPaise / 100).toFixed(2));
+            catObj.spent = Number((spentInPaise / 100).toFixed(2));
+            catObj.spentThisMonth = catObj.spent;
             return catObj;
         });
-        
+
         res.status(200).json({ success: true, data: enrichedCategories });
     } catch (error) { next(error); }
 };
@@ -72,8 +136,7 @@ const createCategory = async (req, res, next) => {
             if (!Number.isFinite(numBudget) || numBudget < 0) {
                 return res.status(400).json({ success: false, message: 'Budget limit must be a valid non-negative number' });
             }
-            
-            // Authoritative backend conversion
+
             try {
                 paiseLimit = await convertToPaise(numBudget, currency);
             } catch (err) {
@@ -85,16 +148,18 @@ const createCategory = async (req, res, next) => {
             }
         }
 
+        const thisMonthKey = getThisMonthKey();
         const category = await Category.create({
             user: req.user.id,
             name,
             type,
             color,
-            budgetLimit: type === 'expense' ? paiseLimit : 0 
+            budgetLimit: type === 'expense' ? paiseLimit : 0,
+            monthlyBudgets: type === 'expense' && paiseLimit > 0 ? { [thisMonthKey]: paiseLimit } : {}
         });
 
         const formatted = category.toObject();
-        formatted.budgetLimit = Number((formatted.budgetLimit / 100).toFixed(2));
+        formatted.budgetLimit = Number((paiseLimit / 100).toFixed(2));
         formatted.spentThisMonth = 0;
 
         res.status(201).json({ success: true, data: formatted });
@@ -104,7 +169,7 @@ const createCategory = async (req, res, next) => {
 const updateCategory = async (req, res, next) => {
     try {
         const { id } = req.params;
-        const { name, color, budgetLimit, currency } = req.body;
+        const { name, color, budgetLimit, currency, startDate, endDate } = req.body;
 
         if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ success: false, message: 'Invalid Category ID format' });
 
@@ -113,17 +178,15 @@ const updateCategory = async (req, res, next) => {
             return res.status(404).json({ success: false, message: 'Category not found or unauthorized' });
         }
 
-        let updateData = {};
-        if (name) updateData.name = name;
-        if (color) updateData.color = color;
+        if (name) category.name = name;
+        if (color) category.color = color;
 
         if (budgetLimit !== undefined) {
             if (category.type === 'income') return res.status(400).json({ success: false, message: 'Income categories cannot have budget limits' });
-            
+
             const numBudget = Number(budgetLimit);
             if (!Number.isFinite(numBudget) || numBudget < 0) return res.status(400).json({ success: false, message: 'Budget limit must be a valid non-negative number' });
-            
-            // Authoritative backend conversion
+
             let paiseLimit;
             try {
                 paiseLimit = await convertToPaise(numBudget, currency);
@@ -132,32 +195,59 @@ const updateCategory = async (req, res, next) => {
             }
 
             if (!Number.isSafeInteger(paiseLimit)) return res.status(400).json({ success: false, message: 'Budget limit is out of valid bounds' });
-            updateData.budgetLimit = paiseLimit;
+
+            const monthKey = getSingleMonthKey(startDate, endDate) || getThisMonthKey();
+            if (!category.monthlyBudgets) {
+                category.monthlyBudgets = new Map();
+            }
+            category.monthlyBudgets.set(monthKey, paiseLimit);
+            category.budgetLimit = paiseLimit;
         }
 
-        const updatedCategory = await Category.findByIdAndUpdate(id, updateData, { new: true });
+        await category.save();
 
         const userObjectId = new mongoose.Types.ObjectId(req.user.id);
-        const now = new Date();
-        const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-        const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+        let transactionQuery = { 
+            user: userObjectId, 
+            category: category._id, 
+            type: 'expense' 
+        };
+
+        if (startDate && endDate) {
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+            const exclusiveEnd = new Date(end);
+            exclusiveEnd.setDate(exclusiveEnd.getDate() + 1);
+            transactionQuery.date = { $gte: start, $lt: exclusiveEnd };
+        } else {
+            const now = new Date();
+            const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+            const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+            transactionQuery.date = { $gte: startOfThisMonth, $lt: startOfNextMonth };
+        }
 
         const spentResult = await Transaction.aggregate([
-            { 
-                $match: { 
-                    user: userObjectId, 
-                    category: updatedCategory._id,
-                    type: 'expense',
-                    date: { $gte: startOfThisMonth, $lt: startOfNextMonth } 
-                } 
-            },
+            { $match: transactionQuery },
             { $group: { _id: null, totalSpent: { $sum: "$amount" } } }
         ]);
 
         const spentInPaise = spentResult.length > 0 ? spentResult[0].totalSpent : 0;
-        const formatted = updatedCategory.toObject();
-        formatted.budgetLimit = Number((formatted.budgetLimit / 100).toFixed(2));
-        formatted.spentThisMonth = Number((spentInPaise / 100).toFixed(2));
+        const monthKey = getSingleMonthKey(startDate, endDate) || getThisMonthKey();
+        const thisMonthKey = getThisMonthKey();
+
+        let budgetInPaise = 0;
+        if (category.type === 'expense' && monthKey) {
+            if (category.monthlyBudgets && category.monthlyBudgets.has(monthKey)) {
+                budgetInPaise = category.monthlyBudgets.get(monthKey);
+            } else if (monthKey === thisMonthKey) {
+                budgetInPaise = category.budgetLimit || 0;
+            }
+        }
+
+        const formatted = category.toObject();
+        formatted.budgetLimit = Number((budgetInPaise / 100).toFixed(2));
+        formatted.spent = Number((spentInPaise / 100).toFixed(2));
+        formatted.spentThisMonth = formatted.spent;
 
         res.status(200).json({ success: true, data: formatted });
     } catch (error) { next(error); }
@@ -181,35 +271,30 @@ const deleteCategory = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'Cannot delete the default Uncategorized category' });
         }
 
-        // Check if there are transactions associated with this category
         const transactionsCount = await Transaction.countDocuments({ category: id, user: req.user.id });
 
         if (transactionsCount > 0) {
-            // Find an existing Uncategorized category of the same type for this user
             let uncategorized = await Category.findOne({ 
                 user: req.user.id, 
                 name: 'Uncategorized', 
                 type: category.type 
             });
 
-            // If it doesn't exist, generate it dynamically
             if (!uncategorized) {
                 uncategorized = await Category.create({
                     user: req.user.id,
                     name: 'Uncategorized',
-                    color: '#9CA3AF', // Neutral gray color for UI
+                    color: '#9CA3AF',
                     type: category.type
                 });
             }
 
-            // Reassign all orphaned transactions to this Uncategorized category
             await Transaction.updateMany(
                 { category: id, user: req.user.id },
                 { $set: { category: uncategorized._id } }
             );
         }
 
-        // Delete the original category
         await Category.findByIdAndDelete(id);
 
         res.status(200).json({ 

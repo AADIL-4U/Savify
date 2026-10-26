@@ -46,7 +46,11 @@ const Dashboard = () => {
         const now = new Date();
         let start, end;
 
-        if (type === 'thisMonth') {
+        if (type === 'all') {
+            // Pass a massive date range to override the backend's default current-month fallback
+            start = new Date(2000, 0, 1);
+            end = new Date(2100, 11, 31, 23, 59, 59, 999);
+        } else if (type === 'thisMonth') {
             start = new Date(now.getFullYear(), now.getMonth(), 1);
             end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
         } else if (type === 'lastMonth') {
@@ -172,6 +176,7 @@ const Dashboard = () => {
                         <option value="last3Months">Last 3 Months</option>
                         <option value="thisYear">This Year</option>
                         <option value="lastYear">Previous Year</option>
+                        <option value="all">All Time</option>
                         <option value="custom">Custom Range</option>
                     </select>
                     {periodType === 'custom' && (

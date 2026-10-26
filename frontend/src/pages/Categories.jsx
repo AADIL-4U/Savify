@@ -2,16 +2,50 @@ import { useState, useEffect, useContext } from 'react';
 import api from '../services/api';
 import { AuthContext } from '../context/AuthContext';
 import { getCurrencySymbol } from '../utils/currency';
-import { PlusCircle, Loader2, AlertCircle, Tag, Wallet, Trash2 } from 'lucide-react';
+import ConfirmModal from '../components/ConfirmModal';
+import { PlusCircle, Loader2, AlertCircle, Tag, Wallet, Trash2, Calendar } from 'lucide-react';
+
+const formatLocal = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+};
+
+const isSingleMonthPeriod = (type, startStr, endStr) => {
+    if (type === 'thisMonth' || type === 'lastMonth') return true;
+    if (type === 'custom' && startStr && endStr) {
+        const startParts = startStr.split('-').map(Number);
+        const endParts = endStr.split('-').map(Number);
+        if (startParts.length !== 3 || endParts.length !== 3) return false;
+
+        const [sYear, sMonth, sDay] = startParts;
+        const [eYear, eMonth, eDay] = endParts;
+
+        if (sYear !== eYear || sMonth !== eMonth) return false;
+        if (sDay !== 1) return false;
+
+        const lastDayOfMonth = new Date(sYear, sMonth, 0).getDate();
+        return eDay === lastDayOfMonth;
+    }
+    return false;
+};
 
 const Categories = () => {
-    const { user, convertFromBase, isCurrencyReady, isCurrencyLoading, currencyError } = useContext(AuthContext);
+    const { 
+        user, convertFromBase, isCurrencyReady, isCurrencyLoading, currencyError,
+        categoriesFilterType: filterType, setCategoriesFilterType: setFilterType,
+        categoriesCustomStart: customStart, setCategoriesCustomStart: setCustomStart,
+        categoriesCustomEnd: customEnd, setCategoriesCustomEnd: setCustomEnd
+    } = useContext(AuthContext);
+
     const currencySymbol = getCurrencySymbol(user?.currency);
     const dynamicStep = user?.currency === 'INR' ? "1000" : "10";
 
     const [categories, setCategories] = useState([]);
     const [loading, setLoading] = useState(true);
     const [fetchError, setFetchError] = useState('');
+    const [isFetching, setIsFetching] = useState(false);
 
     const [name, setName] = useState('');
     const [type, setType] = useState('expense');
@@ -24,6 +58,27 @@ const Categories = () => {
     const [budgetInputValues, setBudgetInputValues] = useState({});
     const [actionLoadingId, setActionLoadingId] = useState(null);
 
+    // Custom Modal State
+    const [confirmModal, setConfirmModal] = useState({ isOpen: false, categoryId: null, categoryName: '' });
+
+    const getActiveDateRange = () => {
+        const now = new Date();
+        if (filterType === 'thisMonth') {
+            return {
+                startDate: formatLocal(new Date(now.getFullYear(), now.getMonth(), 1)),
+                endDate: formatLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+            };
+        } else if (filterType === 'lastMonth') {
+            return {
+                startDate: formatLocal(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+                endDate: formatLocal(new Date(now.getFullYear(), now.getMonth(), 0))
+            };
+        } else if (filterType === 'custom' && customStart && customEnd) {
+            return { startDate: customStart, endDate: customEnd };
+        }
+        return { startDate: null, endDate: null };
+    };
+
     const handleTypeChange = (newType) => {
         setType(newType);
         if (newType === 'income') {
@@ -34,19 +89,77 @@ const Categories = () => {
         }
     };
 
-    useEffect(() => {
-        fetchCategories();
-    }, []);
-
-    const fetchCategories = async () => {
+    const fetchCategories = async (startString, endString) => {
+        setIsFetching(true);
+        setFetchError('');
         try {
-            const response = await api.get('/categories');
+            let url = '/categories';
+            if (startString && endString) url += `?startDate=${startString}&endDate=${endString}`;
+            const response = await api.get(url);
             if (response.data.success) setCategories(response.data.data);
         } catch (error) {
             setFetchError(error.response?.data?.message || 'Failed to load categories.');
         } finally {
             setLoading(false);
+            setIsFetching(false);
         }
+    };
+
+    const applyFilterType = (type) => {
+        setFilterType(type);
+        setFetchError('');
+        const now = new Date();
+
+        if (type === 'all') {
+            fetchCategories(null, null);
+        } else if (type === 'thisMonth') {
+            fetchCategories(
+                formatLocal(new Date(now.getFullYear(), now.getMonth(), 1)), 
+                formatLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+            );
+        } else if (type === 'lastMonth') {
+            fetchCategories(
+                formatLocal(new Date(now.getFullYear(), now.getMonth() - 1, 1)), 
+                formatLocal(new Date(now.getFullYear(), now.getMonth(), 0))
+            );
+        } else if (type === 'last3Months') {
+            fetchCategories(
+                formatLocal(new Date(now.getFullYear(), now.getMonth() - 2, 1)), 
+                formatLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+            );
+        } else if (type === 'thisYear') {
+            fetchCategories(
+                formatLocal(new Date(now.getFullYear(), 0, 1)), 
+                formatLocal(new Date(now.getFullYear(), 11, 31))
+            );
+        } else if (type === 'lastYear') {
+            fetchCategories(
+                formatLocal(new Date(now.getFullYear() - 1, 0, 1)), 
+                formatLocal(new Date(now.getFullYear() - 1, 11, 31))
+            );
+        } else if (type === 'custom') {
+            return;
+        }
+    };
+
+    useEffect(() => {
+        if (filterType === 'custom' && customStart && customEnd) {
+            fetchCategories(customStart, customEnd);
+        } else if (filterType !== 'custom') {
+            applyFilterType(filterType);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const handleFilterChange = (e) => {
+        applyFilterType(e.target.value);
+    };
+
+    const handleCustomApply = () => {
+        setFetchError('');
+        if (!customStart || !customEnd) return setFetchError('Please select both start and end dates.');
+        if (customStart > customEnd) return setFetchError('Start date cannot be after end date.');
+        fetchCategories(customStart, customEnd);
     };
 
     const handleCreateCategory = async (e) => {
@@ -103,9 +216,12 @@ const Categories = () => {
 
         setActionLoadingId(catId);
         try {
+            const dateRange = getActiveDateRange();
             const payload = { 
                 budgetLimit: numVal, 
-                currency: user?.currency || 'INR' 
+                currency: user?.currency || 'INR',
+                startDate: dateRange.startDate,
+                endDate: dateRange.endDate
             };
             const response = await api.put(`/categories/${catId}`, payload);
             if (response.data.success) {
@@ -119,41 +235,42 @@ const Categories = () => {
         }
     };
 
-    const handleDeleteCategory = async (catId, catName) => {
+    const initiateDeleteCategory = (catId, catName) => {
         if (catName === 'Uncategorized') {
             alert('The default Uncategorized category cannot be deleted.');
             return;
         }
+        setConfirmModal({ isOpen: true, categoryId: catId, categoryName: catName });
+    };
 
-        const confirmDelete = window.confirm(
-            `Are you sure you want to delete the "${catName}" category?\n\nAny existing transactions in this category will be preserved and reassigned to "Uncategorized".`
-        );
-        
-        if (!confirmDelete) return;
+    const executeDeleteCategory = async () => {
+        const { categoryId } = confirmModal;
+        if (!categoryId) return;
 
         try {
-            const response = await api.delete(`/categories/${catId}`);
+            const response = await api.delete(`/categories/${categoryId}`);
             if (response.data.success) {
-                setCategories(prev => prev.filter(c => c._id !== catId));
+                setCategories(prev => prev.filter(c => c._id !== categoryId));
             }
         } catch (error) {
             alert(error.response?.data?.message || 'Failed to delete category.');
+        } finally {
+            setConfirmModal({ isOpen: false, categoryId: null, categoryName: '' });
         }
     };
 
-    // Separate categories by type
     const expenseCategories = categories.filter(cat => cat.type === 'expense');
     const incomeCategories = categories.filter(cat => cat.type === 'income');
+    const showBudgets = isSingleMonthPeriod(filterType, customStart, customEnd);
 
-    // Reusable UI card for rendering a single category
     const renderCategoryCard = (cat) => {
         const isExpense = cat.type === 'expense';
-        const hasBudget = isExpense && cat.budgetLimit > 0;
-        
-        const spent = convertFromBase(cat.spentThisMonth || 0);
+        const hasBudget = showBudgets && isExpense && cat.budgetLimit > 0;
+
+        const amount = convertFromBase(cat.spent || cat.spentThisMonth || 0);
         const budget = convertFromBase(cat.budgetLimit || 0);
-        
-        const percentage = hasBudget ? Math.round((spent / budget) * 100) : 0;
+
+        const percentage = hasBudget ? Math.round((amount / budget) * 100) : 0;
         const visualWidth = Math.min(percentage, 100);
 
         let barColor = 'bg-emerald-500 dark:bg-emerald-400'; 
@@ -190,7 +307,7 @@ const Categories = () => {
                     </div>
 
                     <div className="flex items-center gap-4">
-                        {isExpense && (
+                        {showBudgets && isExpense && (
                             <div className="text-right">
                                 {editingBudgetId === cat._id ? (
                                     <div className="flex items-center gap-2">
@@ -227,10 +344,10 @@ const Categories = () => {
                                 )}
                             </div>
                         )}
-                        
+
                         {cat.name !== 'Uncategorized' && (
                             <button 
-                                onClick={() => handleDeleteCategory(cat._id, cat.name)} 
+                                onClick={() => initiateDeleteCategory(cat._id, cat.name)} 
                                 aria-label={`Delete category: ${cat.name}`}
                                 className="text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-400 transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 p-1"
                             >
@@ -240,24 +357,29 @@ const Categories = () => {
                     </div>
                 </div>
 
-                {hasBudget && (
-                    <div className="space-y-1.5 pt-2 border-t border-gray-100 dark:border-oled-border transition-colors">
-                        <div className="flex justify-between text-xs font-medium">
-                            <span className="text-gray-600 dark:text-gray-400 transition-colors">
-                                Spent: <span className="font-semibold text-gray-900 dark:text-gray-100 transition-colors">{currencySymbol}{spent.toFixed(2)}</span> of {currencySymbol}{budget.toFixed(2)}
+                <div className="space-y-1.5 pt-2 border-t border-gray-100 dark:border-oled-border transition-colors">
+                    <div className="flex justify-between text-xs font-medium">
+                        <span className="text-gray-600 dark:text-gray-400 transition-colors">
+                            {isExpense ? 'Spent: ' : 'Received: '} 
+                            <span className="font-semibold text-gray-900 dark:text-gray-100 transition-colors">
+                                {currencySymbol}{amount.toFixed(2)}
                             </span>
+                            {hasBudget && ` of ${currencySymbol}${budget.toFixed(2)}`}
+                        </span>
+                        {hasBudget && (
                             <span className={`${textColor} transition-colors`}>{percentage}% {percentage >= 100 && '— Over Budget!'}</span>
-                        </div>
+                        )}
+                    </div>
+                    {hasBudget && (
                         <div className="w-full bg-gray-100 dark:bg-oled-border rounded-full h-2 overflow-hidden transition-colors">
                             <div className={`h-2 rounded-full transition-all duration-300 ${barColor}`} style={{ width: `${visualWidth}%` }} />
                         </div>
-                    </div>
-                )}
+                    )}
+                </div>
             </div>
         );
     };
 
-    // Strict UI Protection
     if (loading || isCurrencyLoading) {
         return (
             <div className="h-full flex flex-col items-center justify-center min-h-[400px]">
@@ -280,13 +402,43 @@ const Categories = () => {
 
     return (
         <div className="max-w-6xl mx-auto space-y-6">
-            <div>
-                <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 transition-colors">Categories & Budgets</h1>
-                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 transition-colors">Manage your custom categories and set monthly expense budgets.</p>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 transition-colors">Categories & Budgets</h1>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 transition-colors">Manage your custom categories and set monthly expense budgets.</p>
+                </div>
+
+                <div className="bg-white dark:bg-oled-card p-3 rounded-xl border border-gray-200 dark:border-oled-border shadow-sm flex flex-col sm:flex-row gap-3 items-start sm:items-center transition-colors">
+                    <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
+                        <Calendar className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                        <span className="text-sm font-medium">Period:</span>
+                    </div>
+                    <select 
+                        value={filterType} 
+                        onChange={handleFilterChange} 
+                        className="rounded-md border border-gray-300 dark:border-oled-border bg-white dark:bg-oled-popover text-gray-900 dark:text-gray-100 px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-colors"
+                        disabled={isFetching}
+                    >
+                        <option value="thisMonth">This Month</option>
+                        <option value="lastMonth">Last Month</option>
+                        <option value="last3Months">Last 3 Months</option>
+                        <option value="thisYear">This Year</option>
+                        <option value="lastYear">Previous Year</option>
+                        <option value="all">All Time</option>
+                        <option value="custom">Custom Range</option>
+                    </select>
+                    {filterType === 'custom' && (
+                        <div className="flex items-center gap-2">
+                            <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="rounded-md border border-gray-300 dark:border-oled-border bg-white dark:bg-oled-popover text-gray-900 dark:text-gray-100 dark:[color-scheme:dark] px-2 py-1 text-sm" disabled={isFetching} />
+                            <span className="text-gray-500 text-sm">to</span>
+                            <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="rounded-md border border-gray-300 dark:border-oled-border bg-white dark:bg-oled-popover text-gray-900 dark:text-gray-100 dark:[color-scheme:dark] px-2 py-1 text-sm" disabled={isFetching} />
+                            <button onClick={handleCustomApply} disabled={isFetching} className="px-3 py-1 bg-gray-100 dark:bg-oled-popover hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-200 rounded-md text-sm font-medium border border-gray-200 dark:border-oled-border">Apply</button>
+                        </div>
+                    )}
+                </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Left Panel: Form */}
                 <div className="lg:col-span-1">
                     <div className="bg-white dark:bg-oled-card p-6 rounded-xl border border-gray-200 dark:border-oled-border shadow-sm transition-colors">
                         <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2 transition-colors">
@@ -380,29 +532,32 @@ const Categories = () => {
                     </div>
                 </div>
 
-                {/* Right Panel: Lists */}
                 <div className="lg:col-span-2">
-                    <div className="bg-white dark:bg-oled-card rounded-xl border border-gray-200 dark:border-oled-border shadow-sm overflow-hidden flex flex-col h-full min-h-[400px] transition-colors">
+                    <div className="bg-white dark:bg-oled-card rounded-xl border border-gray-200 dark:border-oled-border shadow-sm overflow-hidden flex flex-col h-full min-h-[400px] transition-colors relative">
+                        {isFetching && (
+                            <div className="absolute inset-0 bg-white/80 dark:bg-oled-card/80 backdrop-blur-sm z-10 flex items-center justify-center transition-colors">
+                                <Loader2 className="h-8 w-8 text-emerald-600 dark:text-emerald-400 animate-spin" />
+                            </div>
+                        )}
+
                         <div className="px-6 py-4 border-b border-gray-200 dark:border-oled-border bg-gray-50 dark:bg-oled-card transition-colors">
                             <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 transition-colors">Your Categories & Budgets</h2>
                         </div>
-                        
+
                         <div className="p-6 flex-1 overflow-y-auto">
                             {categories.length === 0 ? (
-                                <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 space-y-3 transition-colors">
+                                <div className="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 space-y-3 transition-colors py-16">
                                     <Tag className="h-12 w-12 opacity-50" />
-                                    <p>No categories found.</p>
+                                    <p>No categories found for this period.</p>
                                 </div>
                             ) : (
                                 <div className="space-y-8">
-                                    
-                                    {/* Expense Categories Section */}
                                     <div>
                                         <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 border-b border-gray-100 dark:border-oled-border pb-2 transition-colors">
                                             Expense Categories
                                         </h3>
                                         {expenseCategories.length === 0 ? (
-                                            <p className="text-sm text-gray-400 dark:text-gray-500 italic">No expense categories created yet.</p>
+                                            <p className="text-sm text-gray-400 dark:text-gray-500 italic">No expense categories in this period.</p>
                                         ) : (
                                             <div className="space-y-4">
                                                 {expenseCategories.map(renderCategoryCard)}
@@ -410,26 +565,33 @@ const Categories = () => {
                                         )}
                                     </div>
 
-                                    {/* Income Categories Section */}
                                     <div>
                                         <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 border-b border-gray-100 dark:border-oled-border pb-2 transition-colors">
                                             Income Categories
                                         </h3>
                                         {incomeCategories.length === 0 ? (
-                                            <p className="text-sm text-gray-400 dark:text-gray-500 italic">No income categories created yet.</p>
+                                            <p className="text-sm text-gray-400 dark:text-gray-500 italic">No income categories in this period.</p>
                                         ) : (
                                             <div className="space-y-4">
                                                 {incomeCategories.map(renderCategoryCard)}
                                             </div>
                                         )}
                                     </div>
-
                                 </div>
                             )}
                         </div>
                     </div>
                 </div>
             </div>
+
+            <ConfirmModal 
+                isOpen={confirmModal.isOpen}
+                onClose={() => setConfirmModal({ isOpen: false, categoryId: null, categoryName: '' })}
+                onConfirm={executeDeleteCategory}
+                title={`Delete "${confirmModal.categoryName}" category?`}
+                message="Any existing transactions in this category will be preserved and reassigned to &quot;Uncategorized&quot;."
+                confirmText="Delete Category"
+            />
         </div>
     );
 };
