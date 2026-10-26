@@ -3,7 +3,7 @@ import api from '../services/api';
 import { AuthContext } from '../context/AuthContext';
 import { getCurrencySymbol } from '../utils/currency';
 import TransactionModal from '../components/TransactionModal';
-import { PlusCircle, Loader2, AlertCircle, Edit2, Trash2, ReceiptText, Filter } from 'lucide-react';
+import { PlusCircle, Loader2, AlertCircle, Edit2, Trash2, ReceiptText, Filter, Download } from 'lucide-react';
 
 const formatLocal = (d) => {
     const y = d.getFullYear();
@@ -13,7 +13,13 @@ const formatLocal = (d) => {
 };
 
 const Transactions = () => {
-    const { user, convertFromBase, isCurrencyReady, isCurrencyLoading, currencyError } = useContext(AuthContext);
+    const { 
+        user, convertFromBase, isCurrencyReady, isCurrencyLoading, currencyError,
+        transactionsFilterType: filterType, setTransactionsFilterType: setFilterType,
+        transactionsCustomStart: customStart, setTransactionsCustomStart: setCustomStart,
+        transactionsCustomEnd: customEnd, setTransactionsCustomEnd: setCustomEnd
+    } = useContext(AuthContext);
+    
     const currencySymbol = getCurrencySymbol(user?.currency);
     
     const [transactions, setTransactions] = useState([]);
@@ -21,34 +27,12 @@ const Transactions = () => {
     const [pageLoading, setPageLoading] = useState(true);
     const [pageError, setPageError] = useState('');
 
-    const [filterType, setFilterType] = useState('all');
-    const [customStart, setCustomStart] = useState('');
-    const [customEnd, setCustomEnd] = useState('');
     const [filterError, setFilterError] = useState('');
     const [isFetching, setIsFetching] = useState(false);
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedTransaction, setSelectedTransaction] = useState(null);
     const [modalLoading, setModalLoading] = useState(false);
-
-    useEffect(() => {
-        const fetchInitialData = async () => {
-            try {
-                const [txRes, catRes] = await Promise.all([
-                    api.get('/transactions'),
-                    api.get('/categories')
-                ]);
-                
-                if (txRes.data.success) setTransactions(txRes.data.data);
-                if (catRes.data.success) setCategories(catRes.data.data);
-            } catch (error) {
-                setPageError('Failed to load transaction data. Please refresh.');
-            } finally {
-                setPageLoading(false);
-            }
-        };
-        fetchInitialData();
-    }, []);
 
     const fetchFilteredTransactions = async (startString, endString) => {
         setIsFetching(true);
@@ -65,20 +49,67 @@ const Transactions = () => {
         }
     };
 
-    const handleFilterChange = (e) => {
-        const type = e.target.value;
+    const applyFilterType = (type) => {
         setFilterType(type);
         setFilterError('');
+        const now = new Date();
 
         if (type === 'all') {
             fetchFilteredTransactions(null, null);
         } else if (type === 'thisMonth') {
-            const now = new Date();
-            fetchFilteredTransactions(formatLocal(new Date(now.getFullYear(), now.getMonth(), 1)), formatLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
+            fetchFilteredTransactions(
+                formatLocal(new Date(now.getFullYear(), now.getMonth(), 1)), 
+                formatLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+            );
         } else if (type === 'lastMonth') {
-            const now = new Date();
-            fetchFilteredTransactions(formatLocal(new Date(now.getFullYear(), now.getMonth() - 1, 1)), formatLocal(new Date(now.getFullYear(), now.getMonth(), 0)));
+            fetchFilteredTransactions(
+                formatLocal(new Date(now.getFullYear(), now.getMonth() - 1, 1)), 
+                formatLocal(new Date(now.getFullYear(), now.getMonth(), 0))
+            );
+        } else if (type === 'last3Months') {
+            fetchFilteredTransactions(
+                formatLocal(new Date(now.getFullYear(), now.getMonth() - 2, 1)), 
+                formatLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+            );
+        } else if (type === 'thisYear') {
+            fetchFilteredTransactions(
+                formatLocal(new Date(now.getFullYear(), 0, 1)), 
+                formatLocal(new Date(now.getFullYear(), 11, 31))
+            );
+        } else if (type === 'lastYear') {
+            fetchFilteredTransactions(
+                formatLocal(new Date(now.getFullYear() - 1, 0, 1)), 
+                formatLocal(new Date(now.getFullYear() - 1, 11, 31))
+            );
+        } else if (type === 'custom') {
+            return;
         }
+    };
+
+    useEffect(() => {
+        const fetchInitialData = async () => {
+            try {
+                const catRes = await api.get('/categories');
+                if (catRes.data.success) setCategories(catRes.data.data);
+
+                // Initialize transactions based on persisted context filter state
+                if (filterType === 'custom' && customStart && customEnd) {
+                    await fetchFilteredTransactions(customStart, customEnd);
+                } else if (filterType !== 'custom') {
+                    applyFilterType(filterType);
+                }
+            } catch (error) {
+                setPageError('Failed to load initial data. Please refresh.');
+            } finally {
+                setPageLoading(false);
+            }
+        };
+        fetchInitialData();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const handleFilterChange = (e) => {
+        applyFilterType(e.target.value);
     };
 
     const handleCustomApply = () => {
@@ -86,6 +117,34 @@ const Transactions = () => {
         if (!customStart || !customEnd) return setFilterError('Please select both start and end dates.');
         if (customStart > customEnd) return setFilterError('Start date cannot be after end date.');
         fetchFilteredTransactions(customStart, customEnd);
+    };
+
+    // --- CSV Export Handler ---
+    const handleExportCSV = () => {
+        if (transactions.length === 0) {
+            alert('No transactions available to export.');
+            return;
+        }
+
+        const headers = ['Date', 'Description', 'Category', 'Type', `Amount (${user?.currency || 'INR'})`];
+        const rows = transactions.map(tx => {
+            const dateStr = new Date(tx.date).toLocaleDateString();
+            const desc = `"${(tx.description || '').replace(/"/g, '""')}"`;
+            const cat = `"${(tx.category?.name || 'Uncategorized').replace(/"/g, '""')}"`;
+            const type = tx.type;
+            const convertedAmount = convertFromBase(tx.amount).toFixed(2);
+            return [dateStr, desc, cat, type, convertedAmount].join(',');
+        });
+
+        const csvContent = [headers.join(','), ...rows].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `savify_transactions_${formatLocal(new Date())}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     };
 
     const handleOpenModal = (transaction = null) => {
@@ -142,7 +201,6 @@ const Transactions = () => {
         }
     };
 
-    // Strict UI Protection
     if (pageLoading || isCurrencyLoading) {
         return (
             <div className="h-full flex flex-col items-center justify-center min-h-[400px]">
@@ -170,9 +228,17 @@ const Transactions = () => {
                     <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 transition-colors">Transactions</h1>
                     <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 transition-colors">View and manage your transaction history.</p>
                 </div>
-                <button onClick={() => handleOpenModal()} className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 dark:bg-emerald-500 text-white dark:text-gray-900 rounded-lg shadow-sm hover:bg-emerald-700 dark:hover:bg-emerald-400 font-medium text-sm transition-colors">
-                    <PlusCircle className="h-4 w-4" /> Add Transaction
-                </button>
+                <div className="flex items-center gap-3">
+                    <button 
+                        onClick={handleExportCSV} 
+                        className="flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-oled-card text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-oled-border rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-oled-popover font-medium text-sm transition-colors"
+                    >
+                        <Download className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> Export CSV
+                    </button>
+                    <button onClick={() => handleOpenModal()} className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 dark:bg-emerald-500 text-white dark:text-gray-900 rounded-lg shadow-sm hover:bg-emerald-700 dark:hover:bg-emerald-400 font-medium text-sm transition-colors">
+                        <PlusCircle className="h-4 w-4" /> Add Transaction
+                    </button>
+                </div>
             </div>
 
             <div className="bg-white dark:bg-oled-card p-4 rounded-xl border border-gray-200 dark:border-oled-border shadow-sm flex flex-col sm:flex-row gap-4 items-start sm:items-center transition-colors">
@@ -186,9 +252,12 @@ const Transactions = () => {
                     className="rounded-md border border-gray-300 dark:border-oled-border bg-white dark:bg-oled-popover text-gray-900 dark:text-gray-100 px-3 py-2 text-sm shadow-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors" 
                     disabled={isFetching}
                 >
-                    <option value="all">All Time</option>
                     <option value="thisMonth">This Month</option>
                     <option value="lastMonth">Last Month</option>
+                    <option value="last3Months">Last 3 Months</option>
+                    <option value="thisYear">This Year</option>
+                    <option value="lastYear">Previous Year</option>
+                    <option value="all">All Time</option>
                     <option value="custom">Custom Range</option>
                 </select>
                 {filterType === 'custom' && (
@@ -251,13 +320,12 @@ const Transactions = () => {
                             </thead>
                             <tbody className="divide-y divide-gray-200 dark:divide-oled-border">
                                 {transactions.map((tx) => {
-                                    // NEW: Dynamic overriding for Uncategorized text and dot colors
                                     const isUncategorized = tx.category.name === 'Uncategorized';
                                     let dotColor = tx.category.color;
                                     let categoryTextColor = "text-gray-600 dark:text-gray-300";
 
                                     if (isUncategorized) {
-                                        dotColor = tx.type === 'income' ? '#10b981' : '#ef4444'; // Emerald for income, Red for expense
+                                        dotColor = tx.type === 'income' ? '#10b981' : '#ef4444'; 
                                         categoryTextColor = tx.type === 'income' 
                                             ? 'text-emerald-600 dark:text-emerald-400 font-medium' 
                                             : 'text-red-600 dark:text-red-400 font-medium';

@@ -5,20 +5,20 @@ export const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem('savify_user');
-    if (!savedUser) return null;
+        const savedUser = localStorage.getItem('savify_user');
+        if (!savedUser) return null;
 
-    try {
-        const parsed = JSON.parse(savedUser);
-        return {
-            ...parsed,
-            currency: parsed.currency || 'INR'
-        };
-    } catch {
-        localStorage.removeItem('savify_user');
-        return null;
-    }
-});
+        try {
+            const parsed = JSON.parse(savedUser);
+            return {
+                ...parsed,
+                currency: parsed.currency || 'INR'
+            };
+        } catch {
+            localStorage.removeItem('savify_user');
+            return null;
+        }
+    });
     
     const [loading, setLoading] = useState(false);
     
@@ -27,13 +27,22 @@ export const AuthProvider = ({ children }) => {
     const [isRatesLoading, setIsRatesLoading] = useState(false);
     const [ratesError, setRatesError] = useState(null);
 
+    // Dashboard Period Persistence State (Resets on refresh/logout)
+    const [dashboardPeriod, setDashboardPeriod] = useState('thisMonth');
+    const [dashboardCustomStart, setDashboardCustomStart] = useState('');
+    const [dashboardCustomEnd, setDashboardCustomEnd] = useState('');
+
+    // Transactions Filter Persistence State (Resets on refresh/logout)
+    const [transactionsFilterType, setTransactionsFilterType] = useState('thisMonth');
+    const [transactionsCustomStart, setTransactionsCustomStart] = useState('');
+    const [transactionsCustomEnd, setTransactionsCustomEnd] = useState('');
+
     const fetchRates = async () => {
         setIsRatesLoading(true);
         setRatesError(null);
         try {
             const response = await api.get('/currency/rates');
             
-            // Explicitly handle HTTP 200 with missing/invalid payloads
             if (response.data && response.data.success && response.data.data && response.data.data.rates) {
                 setExchangeRates(response.data.data.rates);
             } else {
@@ -49,14 +58,12 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    // Fetch on mount or when token is available
     useEffect(() => {
         if (user && user.token && !exchangeRates && !isRatesLoading && !ratesError) {
             fetchRates();
         }
     }, [user?.token]);
 
-    // Retry fetching if user switches to a foreign currency but rates previously failed
     useEffect(() => {
         if (user && user.token && user.currency !== 'INR' && !exchangeRates && !isRatesLoading) {
             fetchRates();
@@ -102,6 +109,12 @@ export const AuthProvider = ({ children }) => {
     const logout = () => {
         setUser(null);
         setExchangeRates(null);
+        setDashboardPeriod('thisMonth');
+        setDashboardCustomStart('');
+        setDashboardCustomEnd('');
+        setTransactionsFilterType('thisMonth');
+        setTransactionsCustomStart('');
+        setTransactionsCustomEnd('');
         localStorage.removeItem('savify_user');
         window.location.href = '/login';
     };
@@ -114,20 +127,16 @@ export const AuthProvider = ({ children }) => {
         });
     };
 
-    // --- Currency Conversion Helpers ---
     const convertFromBase = (amountInINR) => {
         if (!amountInINR) return 0;
         const target = user?.currency || 'INR';
         
         if (target === 'INR') return amountInINR;
-        
-        // STRICT RULE: Never fail silently. If foreign currency is selected but rates are missing, return null.
         if (!exchangeRates || !exchangeRates[target]) return null; 
         
         return amountInINR * exchangeRates[target];
     };
 
-    // Derived readiness states for UI protection
     const isCurrencyReady = user?.currency === 'INR' || (exchangeRates !== null && exchangeRates[user.currency] !== undefined);
     const isCurrencyLoading = user?.currency !== 'INR' && isRatesLoading;
     const currencyError = user?.currency !== 'INR' && ratesError ? ratesError : null;
@@ -135,7 +144,13 @@ export const AuthProvider = ({ children }) => {
     return (
         <AuthContext.Provider value={{ 
             user, loading, login, register, logout, updateUserProfile, 
-            convertFromBase, isCurrencyReady, isCurrencyLoading, currencyError, fetchRates 
+            convertFromBase, isCurrencyReady, isCurrencyLoading, currencyError, fetchRates,
+            dashboardPeriod, setDashboardPeriod,
+            dashboardCustomStart, setDashboardCustomStart,
+            dashboardCustomEnd, setDashboardCustomEnd,
+            transactionsFilterType, setTransactionsFilterType,
+            transactionsCustomStart, setTransactionsCustomStart,
+            transactionsCustomEnd, setTransactionsCustomEnd
         }}>
             {children}
         </AuthContext.Provider>
