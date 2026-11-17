@@ -1,6 +1,15 @@
 # Savify — Personal Finance and Expense Tracking System
 
-A full-stack personal finance and expense tracking web application engineered with the **MERN Stack** (MongoDB, Express.js, React, Node.js). Savify centralizes income and expense logging, custom categorization, monthly budget tracking, multi-currency conversion, and real-time financial analytics behind a secure authentication layer.
+**Your Money, In Focus.** Savify is a full-stack personal finance and expense tracking web application engineered with the **MERN Stack** (MongoDB, Express.js, React, Node.js). Savify centralizes income and expense logging, custom categorization, monthly budget tracking, multi-currency conversion, and real-time financial analytics behind a secure authentication layer.
+
+---
+
+## Live Deployment
+
+* **Web Application (Frontend):** [https://savify-kappa.vercel.app](https://savify-kappa.vercel.app)
+* **REST API (Backend):** `https://savify-backend-w29p.onrender.com/api`
+
+> **Note:** The backend runs on Render's free tier and spins down after 15 minutes of inactivity. The first request after an idle period may take 30–50 seconds to wake the server, after which responses are instantaneous.
 
 ---
 
@@ -117,16 +126,39 @@ cd Savify
 cd backend
 npm install
 ```
-Create a `.env` file inside `backend/` based on `backend/.env.example` and configure your environment variables (MongoDB URI, `JWT_SECRET`, `FRONTEND_URL`, and SMTP/email API credentials). Then start the server:
+Create a `backend/.env` file with the following variables:
+```env
+PORT=5000
+NODE_ENV=development
+MONGO_URI=your_mongodb_atlas_connection_string
+JWT_SECRET=your_jwt_secret_key
+FRONTEND_URL=http://localhost:5173
+
+# Email Configuration ("console", "brevo", or "smtp")
+EMAIL_MODE=brevo
+BREVO_API_KEY=your_brevo_api_key
+EMAIL_FROM=Savify <your-verified-sender@example.com>
+```
+
+Start the backend server:
 ```bash
 npm start
 ```
 
-### 3. Start the Frontend
-Open a new terminal window:
+### 3. Configure & Run the Frontend
+Open a second terminal from the root `Savify` directory:
 ```bash
 cd frontend
 npm install
+```
+
+Create a `frontend/.env` file:
+```env
+VITE_API_URL=http://localhost:5000/api
+```
+
+Start the Vite development server:
+```bash
 npm run dev
 ```
 Open the local URL displayed by Vite (typically `http://localhost:5173`) in your browser.
