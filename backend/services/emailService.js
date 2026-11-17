@@ -1,14 +1,23 @@
 const nodemailer = require('nodemailer');
 
 /**
+ * Helper to parse EMAIL_FROM into { name, email } for Brevo's REST API
+ * Supports both "Savify <user@example.com>" and "user@example.com"
+ */
+const parseSender = (emailFrom) => {
+    const match = emailFrom.match(/^(?:"?([^"]*)"?\s)?<?([^<>]+@[^<>]+)>?$/);
+    if (match) {
+        return {
+            name: (match[1] || 'Savify').trim(),
+            email: match[2].trim()
+        };
+    }
+    return { name: 'Savify', email: emailFrom.trim() };
+};
+
+/**
  * Centralized Generic Email Service
- * Exposed for future verification and recovery features.
- * 
- * @param {Object} options 
- * @param {string} options.to - Recipient email address
- * @param {string} options.subject - Email subject line
- * @param {string} [options.text] - Plain text email body
- * @param {string} [options.html] - HTML email body
+ * Supports "console" (dev), "brevo" (HTTPS API for Render), and "smtp" (local/VPS)
  */
 const sendEmail = async ({ to, subject, text, html }) => {
     // 1. Validate required payload
@@ -20,8 +29,8 @@ const sendEmail = async ({ to, subject, text, html }) => {
     const env = process.env.NODE_ENV || 'development';
 
     // 2. Production Safety Check
-    if (env === 'production' && mode !== 'smtp') {
-        throw new Error('CRITICAL: EMAIL_MODE must be "smtp" in a production environment.');
+    if (env === 'production' && !['smtp', 'brevo'].includes(mode)) {
+        throw new Error('CRITICAL: EMAIL_MODE must be "brevo" or "smtp" in a production environment.');
     }
 
     // 3. Enforce explicit modes (No silent fallbacks)
@@ -33,20 +42,54 @@ const sendEmail = async ({ to, subject, text, html }) => {
     // CONSOLE MODE (Development Simulation)
     // ==========================================
     if (mode === 'console') {
-        // SECURITY: Log ONLY safe metadata. Do NOT log text or html payload to prevent secret leaks (OTPs, tokens).
         console.log(`[Email Service - Console Mode] Simulated sending email to: ${to}`);
         console.log(`[Email Service - Console Mode] Subject: ${subject}`);
-        
         return { success: true, message: 'Email simulated safely in console mode' };
     }
 
     // ==========================================
-    // SMTP MODE (Actual Delivery)
+    // BREVO HTTPS API MODE (Production on Render)
+    // ==========================================
+    if (mode === 'brevo') {
+        const { BREVO_API_KEY, EMAIL_FROM } = process.env;
+
+        if (!BREVO_API_KEY || !EMAIL_FROM) {
+            throw new Error('Brevo Mode active but BREVO_API_KEY or EMAIL_FROM is missing from environment.');
+        }
+
+        const payload = {
+            sender: parseSender(EMAIL_FROM),
+            to: [{ email: to }],
+            subject
+        };
+
+        if (html) payload.htmlContent = html;
+        if (text) payload.textContent = text;
+
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+            method: 'POST',
+            headers: {
+                'accept': 'application/json',
+                'api-key': BREVO_API_KEY.trim(),
+                'content-type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorDetails = await response.text();
+            throw new Error(`Brevo API failed (${response.status}): ${errorDetails}`);
+        }
+
+        return { success: true, message: 'Email sent successfully via Brevo API' };
+    }
+
+    // ==========================================
+    // SMTP MODE (Local / Non-Blocked Hosts)
     // ==========================================
     if (mode === 'smtp') {
         const { EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASS, EMAIL_FROM } = process.env;
 
-        // Strict configuration validation - do not expose which credential failed specifically to avoid leaks
         if (!EMAIL_HOST || !EMAIL_PORT || !EMAIL_USER || !EMAIL_PASS || !EMAIL_FROM) {
             throw new Error('SMTP Mode active but required SMTP configuration is missing from environment.');
         }
@@ -54,28 +97,25 @@ const sendEmail = async ({ to, subject, text, html }) => {
         const transporter = nodemailer.createTransport({
             host: EMAIL_HOST,
             port: parseInt(EMAIL_PORT, 10),
-            secure: parseInt(EMAIL_PORT, 10) === 465, // True only for strict SSL on port 465
+            secure: parseInt(EMAIL_PORT, 10) === 465,
             auth: {
                 user: EMAIL_USER,
                 pass: EMAIL_PASS
             }
         });
 
-        const mailOptions = {
+        await transporter.sendMail({
             from: EMAIL_FROM,
             to,
             subject,
             text,
             html
-        };
+        });
 
-        await transporter.sendMail(mailOptions);
-        
         return { success: true, message: 'Email sent successfully via SMTP' };
     }
 
-    // Catch-all for unrecognized modes
-    throw new Error(`Invalid EMAIL_MODE: "${mode}". Supported modes are "console" and "smtp".`);
+    throw new Error(`Invalid EMAIL_MODE: "${mode}". Supported modes are "console", "brevo", and "smtp".`);
 };
 
 module.exports = { sendEmail };
