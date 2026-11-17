@@ -8,10 +8,19 @@ connectDB();
 
 const app = express();
 
+// Required when deployed behind Render's reverse proxy for rate limiting
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(express.json());
+
+const allowedOrigins = [
+    'http://localhost:5173',
+    process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : null
+].filter(Boolean);
+
 app.use(cors({
-    origin: 'http://localhost:5173',
+    origin: allowedOrigins,
     credentials: true
 }));
 
