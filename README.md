@@ -6,7 +6,7 @@
 
 ## Live Deployment
 
-* **Web Application (Frontend):** [https://savify-kappa.vercel.app](https://savify-kappa.vercel.app)
+* **Web Application (Frontend):** [https://savify-app.vercel.app](https://savify-app.vercel.app)
 * **REST API (Backend):** `https://savify-backend-w29p.onrender.com/api`
 
 > **Note:** The backend runs on Render's free tier and spins down after 15 minutes of inactivity. The first request after an idle period may take 30–50 seconds to wake the server, after which responses are instantaneous.
